@@ -59,9 +59,20 @@ const config = {
   },
 
   otp: {
-    expiryMinutes: parseInt(env.OTP_EXPIRY_MINUTES, 10) || 5,
-    maxAttempts: parseInt(env.OTP_MAX_ATTEMPTS, 10) || 3,
+    expiryMinutes: parseInt(env.OTP_EXPIRY_MINUTES, 10) || 15,
+    maxAttempts: parseInt(env.OTP_MAX_ATTEMPTS, 10) || 5,
     maxResendsPerHour: parseInt(env.OTP_MAX_RESENDS_PER_HOUR, 10) || 5,
+    deterministic: env.DETERMINISTIC_OTP === 'true',
+  },
+
+  sms: {
+    apiKey: env.SMS_API_KEY || '',
+  },
+
+  ai: {
+    ollamaHost: env.OLLAMA_HOST || '127.0.0.1',
+    ollamaPort: parseInt(env.OLLAMA_PORT, 10) || 11434,
+    ollamaModel: env.OLLAMA_MODEL || 'phi3',
   },
 
   rateLimit: {

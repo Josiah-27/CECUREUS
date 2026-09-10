@@ -172,8 +172,8 @@ router.post(
     body('name').trim().notEmpty().withMessage('Name is required'),
     body('phone').trim().notEmpty().withMessage('Phone is required'),
     body('email').trim().isEmail().withMessage('Valid email/Gmail is required'),
-    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-    body('emailOtp').trim().isLength({ min: 6, max: 6 }).withMessage('Email OTP must be 6 digits'),
+    body('password').optional().isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+    body('emailOtp').optional().trim().isLength({ min: 6, max: 6 }).withMessage('Email OTP must be 6 digits'),
   ],
   async (req, res, next) => {
     try {
@@ -181,18 +181,53 @@ router.post(
       if (valError) return;
 
       const { name, phone, email, password, emailOtp } = req.body;
+      const crypto = require('crypto');
+      const db = require('../database/pool');
 
-      // Verify email OTP
-      const emailRes = await authService.verifyOTP(email, emailOtp, 'registration');
-      if (!emailRes.valid) {
-        return res.status(400).json({
-          error: `Email verification failed: ${emailRes.error}`,
-          code: 'EMAIL_OTP_INVALID',
-        });
+      // If emailOtp provided, verify it directly
+      if (emailOtp) {
+        const emailRes = await authService.verifyOTP(email.trim(), emailOtp.trim(), 'registration');
+        if (!emailRes.valid) {
+          return res.status(400).json({
+            error: `Email verification failed: ${emailRes.error}`,
+            code: 'EMAIL_OTP_INVALID',
+          });
+        }
+      } else {
+        // Verify email was verified recently (within last 30 minutes)
+        const [recentVerified] = await db.query(
+          `SELECT id FROM otp_codes 
+           WHERE phone = ? AND purpose = 'registration' AND verified_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 MINUTE)
+           ORDER BY verified_at DESC LIMIT 1`,
+          [email.trim()]
+        );
+        if (!recentVerified || recentVerified.length === 0) {
+          return res.status(400).json({
+            error: 'Email verification code has not been verified yet.',
+            code: 'EMAIL_NOT_VERIFIED',
+          });
+        }
       }
 
+      // If password was omitted in the UI, generate a cryptographically strong credential
+      const finalPassword = password || (crypto.randomBytes(16).toString('hex') + 'A1!#');
+
       // Register account
-      const account = await authService.registerAccount({ name, phone, email, password });
+      const account = await authService.registerAccount({
+        name: name.trim(),
+        phone: phone.trim(),
+        email: email.trim().toLowerCase(),
+        password: finalPassword,
+      });
+
+      // Mark verified status
+      await db.query(
+        'UPDATE accounts SET phone_verified = 1, email_verified = 1 WHERE id = ?',
+        [account.id]
+      );
+      account.phone_verified = 1;
+      account.email_verified = 1;
+
       const session = await authService.createSession(account.id, {
         deviceInfo: req.headers['user-agent'],
         ipAddress: req.ip,
@@ -255,13 +290,84 @@ router.post(
 );
 
 /**
+ * POST /api/auth/login-with-otp
+ */
+router.post(
+  '/login-with-otp',
+  authLimiter,
+  [
+    body().custom((value, { req }) => {
+      const id = req.body.identifier || req.body.phone || req.body.email;
+      if (!id || !String(id).trim()) {
+        throw new Error('Phone number or email is required');
+      }
+      return true;
+    }),
+    body('code').trim().isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits'),
+  ],
+  async (req, res, next) => {
+    try {
+      const valError = handleValidationErrors(req, res);
+      if (valError) return;
+
+      const target = (req.body.identifier || req.body.phone || req.body.email).trim();
+      const { code } = req.body;
+
+      const otpRes = await authService.verifyOTP(target, code, 'login');
+      if (!otpRes.valid) {
+        return res.status(400).json({
+          error: otpRes.error,
+          code: 'OTP_INVALID',
+        });
+      }
+
+      const account = await authService.findAccountByIdentifier(target);
+      if (!account) {
+        return res.status(404).json({
+          error: 'No account found with this phone number or email',
+          code: 'ACCOUNT_NOT_FOUND',
+        });
+      }
+
+      const session = await authService.createSession(account.id, {
+        deviceInfo: req.headers['user-agent'],
+        ipAddress: req.ip,
+      });
+
+      res.json({
+        message: 'Login successful',
+        account: {
+          id: account.id,
+          name: account.name,
+          phone: account.phone,
+          email: account.email,
+        },
+        session: {
+          token: session.token,
+          expiresAt: session.expiresAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
  * POST /api/auth/request-otp
+ * Supports either phone or email for progressive step verification
  */
 router.post(
   '/request-otp',
   otpLimiter,
   [
-    body('phone').trim().notEmpty().withMessage('Phone number is required'),
+    body().custom((value, { req }) => {
+      const target = req.body.identifier || req.body.phone || req.body.email;
+      if (!target || !String(target).trim()) {
+        throw new Error('Phone number or email is required');
+      }
+      return true;
+    }),
     body('purpose')
       .notEmpty()
       .isIn(['registration', 'login', 'password_reset'])
@@ -272,11 +378,12 @@ router.post(
       const valError = handleValidationErrors(req, res);
       if (valError) return;
 
-      const { phone, purpose } = req.body;
-      const code = await authService.createOTP(phone, purpose);
+      const target = (req.body.identifier || req.body.phone || req.body.email).trim();
+      const { purpose } = req.body;
+      const code = await authService.createOTP(target, purpose);
 
       res.json({
-        message: 'Verification code sent',
+        message: `Verification code sent to ${target}`,
         devOtpCode: config.isDev ? code : undefined,
       });
     } catch (error) {
@@ -287,12 +394,19 @@ router.post(
 
 /**
  * POST /api/auth/verify-otp
+ * Verifies code against either phone or email
  */
 router.post(
   '/verify-otp',
   authLimiter,
   [
-    body('phone').trim().notEmpty().withMessage('Phone number is required'),
+    body().custom((value, { req }) => {
+      const target = req.body.identifier || req.body.phone || req.body.email;
+      if (!target || !String(target).trim()) {
+        throw new Error('Phone number or email is required');
+      }
+      return true;
+    }),
     body('code')
       .trim()
       .notEmpty()
@@ -309,8 +423,9 @@ router.post(
       const valError = handleValidationErrors(req, res);
       if (valError) return;
 
-      const { phone, code, purpose } = req.body;
-      const result = await authService.verifyOTP(phone, code, purpose);
+      const target = (req.body.identifier || req.body.phone || req.body.email).trim();
+      const { code, purpose } = req.body;
+      const result = await authService.verifyOTP(target, code, purpose);
 
       if (!result.valid) {
         return res.status(400).json({
@@ -321,6 +436,7 @@ router.post(
 
       res.json({
         message: 'Verification successful',
+        verified: true,
       });
     } catch (error) {
       next(error);

@@ -269,6 +269,9 @@ async function deleteAccount(accountId) {
 // ─── OTP OPERATIONS ────────────────────────────────────────
 
 function generateOTP() {
+  if (config.otp.deterministic) {
+    return '123456';
+  }
   return crypto.randomInt(100000, 999999).toString();
 }
 
@@ -295,13 +298,46 @@ async function createOTP(identifier, purpose) {
     [id, identifier, codeHash, purpose, expiresAt]
   );
 
-  // SMS Phone Verification -> Display in terminal for developer testing
+  // SMS Phone Verification
   if (!identifier.includes('@')) {
+    if (config.sms.apiKey) {
+      logger.info('Dispatching SMS OTP via configured SMS gateway', { phone: identifier });
+      // Gateway integration (e.g. Fast2SMS HTTP trigger)
+      try {
+        const https = require('https');
+        const postData = JSON.stringify({
+          route: 'otp',
+          variables_values: code,
+          numbers: identifier.replace(/^\+91/, '').trim(),
+        });
+        const req = https.request(
+          'https://www.fast2sms.com/dev/bulkV2',
+          {
+            method: 'POST',
+            headers: {
+              authorization: config.sms.apiKey,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(postData),
+            },
+          },
+          (res) => {
+            logger.info('SMS gateway response status', { statusCode: res.statusCode });
+          }
+        );
+        req.on('error', (e) => logger.warn('SMS gateway call failed', { error: e.message }));
+        req.write(postData);
+        req.end();
+      } catch (smsErr) {
+        logger.warn('SMS dispatch error', { error: smsErr.message });
+      }
+    }
+
+    // Always log clean SMS banner to terminal for instant developer/admin verification
     console.log('\n======================================================================');
     console.log('📱 [CECUREUS SMS OTP]');
     console.log(`👉 Phone Number:       ${identifier}`);
     console.log(`👉 6-Digit OTP Code:   ${code}`);
-    console.log(`👉 Validity:           15 minutes`);
+    console.log(`👉 Validity:           ${config.otp.expiryMinutes} minutes`);
     console.log('======================================================================\n');
     logger.info('SMS OTP generated for phone', { phone: identifier, devOtpCode: code, otpId: id });
   } else {

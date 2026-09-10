@@ -31,8 +31,16 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (phone: string, password?: string) => Promise<void>;
+  loginWithOtp: (identifier: string, code: string) => Promise<void>;
   continueAsGuest: () => Promise<void>;
   register: (name: string, phone: string, email?: string, password?: string) => Promise<void>;
+  registerWithOtp: (data: {
+    name: string;
+    phone: string;
+    email: string;
+    password?: string;
+    emailOtp?: string;
+  }) => Promise<void>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -139,6 +147,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
+  const loginWithOtp = useCallback(async (identifier: string, code: string) => {
+    setIsLoading(true);
+    try {
+      const response = await authApi.loginWithOtp({
+        identifier: identifier.trim(),
+        code: code.trim(),
+      });
+      const authToken = response.session?.token;
+      const accountUser = response.account;
+
+      if (!authToken || !accountUser) {
+        throw new Error('Invalid response from server. Please try again.');
+      }
+
+      setToken(authToken);
+      setUser(accountUser);
+
+      await saveAuthToken(authToken);
+      await saveUserProfile(accountUser);
+    } catch (error: any) {
+      throw new Error(error.message || 'Login with OTP failed. Please check the code.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   const continueAsGuest = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -173,6 +207,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(false);
     }
   }, []);
+
+  const registerWithOtp = useCallback(
+    async (data: {
+      name: string;
+      phone: string;
+      email: string;
+      password?: string;
+      emailOtp?: string;
+    }) => {
+      setIsLoading(true);
+      try {
+        const response = await authApi.registerWithOtp(data);
+        const authToken = response.session?.token;
+        const accountUser = response.account;
+
+        if (!authToken || !accountUser) {
+          throw new Error('Invalid registration response from server.');
+        }
+
+        setToken(authToken);
+        setUser(accountUser);
+
+        await saveAuthToken(authToken);
+        await saveUserProfile(accountUser);
+      } catch (error: any) {
+        throw new Error(error.message || 'Registration failed. Please check your details and connection.');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -220,8 +286,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading,
         isAuthenticated: !!user,
         login,
+        loginWithOtp,
         continueAsGuest,
         register,
+        registerWithOtp,
         logout,
         deleteAccount,
         refreshProfile,

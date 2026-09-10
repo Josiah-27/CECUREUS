@@ -10,11 +10,12 @@
  */
 
 const http = require('http');
+const config = require('../config');
 const logger = require('../config/logger');
 
-const OLLAMA_HOST = process.env.OLLAMA_HOST || '127.0.0.1';
-const OLLAMA_PORT = parseInt(process.env.OLLAMA_PORT || '11434', 10);
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'phi3';
+const OLLAMA_HOST = config.ai.ollamaHost;
+const OLLAMA_PORT = config.ai.ollamaPort;
+const OLLAMA_MODEL = config.ai.ollamaModel;
 
 const ALLY_SYSTEM_PROMPT = `You are Ally, a warm, empathetic, and confidential AI mental wellness companion from CecureUs.
 Your purpose:
