@@ -1,19 +1,21 @@
 /**
- * CECUREUS — Create an Account (Progressive Inline OTP Verification)
+ * CECUREUS — Registration Screen
  *
- * Pixel-accurate implementation strictly matching the provided design:
- * - Top-right red '✕' close button
- * - Clean white card / modal framing
- * - "Full Name" input
- * - "Mobile" (+91 box) with "Get OTP" -> inline "Mobile OTP" with red outlined "Verify" -> "Verified ✓" green pill
- * - "Email" (enabled only after mobile is verified) with "Send OTP" -> inline "Email OTP" with red outlined "Verify" -> "Verified ✓" green pill
- * - Countdown timers ("Didn't receive OTP? Resend in 17s")
- * - Red square checkbox: "I agree to Terms & Conditions & Privacy Policy."
- * - Solid red "Signup" button
- * - "Already have an account? Login" footer
+ * Fully integrated with the official CecureUs Design System:
+ * - Brand Theme Colors: Primary Teal #00A99D, Mint #E6F7F5, Slate #0F172A
+ * - Official CecureUs Logo & Card elevation
+ * - Progressive Step-by-Step Inline OTP Verification:
+ *   1. User enters Full Name & Mobile (+91)
+ *   2. "Get OTP" button on right opens inline "Mobile OTP" input row below
+ *   3. Verifying phone displays "Verified ✓" green pill and locks the field
+ *   4. Email input unlocks ONLY after phone verification succeeds
+ *   5. "Send OTP" button on right opens inline "Email OTP" row below
+ *   6. Verifying email displays "Verified ✓" badge
+ *   7. Agreement to Terms & Conditions checkbox
+ *   8. Brand Teal "Create Account" button directly routes to authenticated Dashboard
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -29,6 +31,10 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Card } from '../../components/ui/Card';
+import { Button } from '../../components/ui/Button';
+import { Logo } from '../../components/ui/Logo';
+import { colors, typography, spacing, borderRadius, shadows } from '../../constants/theme';
 import { authApi } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -44,7 +50,7 @@ export default function RegisterScreen() {
   const [emailOtp, setEmailOtp] = useState('');
   const [agreed, setAgreed] = useState(true);
 
-  // Progressive Verification Flow States
+  // Progressive Verification States
   const [isMobileOtpSent, setIsMobileOtpSent] = useState(false);
   const [isMobileVerified, setIsMobileVerified] = useState(false);
   const [isEmailOtpSent, setIsEmailOtpSent] = useState(false);
@@ -61,11 +67,11 @@ export default function RegisterScreen() {
   const [mobileTimer, setMobileTimer] = useState(0);
   const [emailTimer, setEmailTimer] = useState(0);
 
-  // Status & Error Banners
+  // Error & Status Banners
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Mobile timer effect
+  // Mobile resend timer
   useEffect(() => {
     let interval: any = null;
     if (mobileTimer > 0) {
@@ -74,7 +80,7 @@ export default function RegisterScreen() {
     return () => clearInterval(interval);
   }, [mobileTimer]);
 
-  // Email timer effect
+  // Email resend timer
   useEffect(() => {
     let interval: any = null;
     if (emailTimer > 0) {
@@ -96,10 +102,7 @@ export default function RegisterScreen() {
     setIsRequestingMobileOtp(true);
 
     try {
-      const formattedPhone = cleanMobile.startsWith('91') && cleanMobile.length === 12
-        ? cleanMobile
-        : cleanMobile.slice(-10);
-
+      const formattedPhone = cleanMobile.slice(-10);
       const response = await authApi.requestPhoneOtp({ phone: formattedPhone });
       setIsMobileOtpSent(true);
       setMobileTimer(30);
@@ -121,7 +124,7 @@ export default function RegisterScreen() {
     const cleanCode = mobileOtp.trim();
 
     if (!cleanCode || cleanCode.length !== 6) {
-      setError('Please enter the complete 6-digit OTP');
+      setError('Please enter the 6-digit OTP code');
       return;
     }
 
@@ -137,9 +140,9 @@ export default function RegisterScreen() {
 
       setIsMobileVerified(true);
       setIsMobileOtpSent(false);
-      setSuccess('Mobile number verified successfully! You can now verify your email.');
+      setSuccess('Mobile number verified! You can now verify your email address.');
     } catch (err: any) {
-      setError(err.message || 'Invalid or expired mobile OTP. Please try again.');
+      setError(err.message || 'Invalid or expired mobile verification code.');
     } finally {
       setIsVerifyingMobileOtp(false);
     }
@@ -148,7 +151,7 @@ export default function RegisterScreen() {
   // ─── STEP 3: EMAIL OTP REQUEST (UNLOCKED ONLY AFTER MOBILE VERIFIED) ───
   const handleSendEmailOtp = async () => {
     if (!isMobileVerified) {
-      setError('Please verify your mobile number first');
+      setError('Please verify your mobile phone first');
       return;
     }
 
@@ -172,7 +175,7 @@ export default function RegisterScreen() {
         setEmailOtp(response.devOtpCode);
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to send email OTP. Please check your address.');
+      setError(err.message || 'Failed to dispatch email verification code.');
     } finally {
       setIsRequestingEmailOtp(false);
     }
@@ -184,7 +187,7 @@ export default function RegisterScreen() {
     const cleanCode = emailOtp.trim();
 
     if (!cleanCode || cleanCode.length !== 6) {
-      setError('Please enter the complete 6-digit email OTP');
+      setError('Please enter the 6-digit email OTP code');
       return;
     }
 
@@ -202,7 +205,7 @@ export default function RegisterScreen() {
       setIsEmailOtpSent(false);
       setSuccess('Email address verified successfully!');
     } catch (err: any) {
-      setError(err.message || 'Invalid or expired email OTP. Please try again.');
+      setError(err.message || 'Invalid or expired email verification code.');
     } finally {
       setIsVerifyingEmailOtp(false);
     }
@@ -239,7 +242,6 @@ export default function RegisterScreen() {
         email: email.trim().toLowerCase(),
       });
 
-      // Directly replace with Tabs Dashboard on successful signup
       router.replace('/(tabs)');
     } catch (err: any) {
       setError(err.message || 'Registration could not be completed. Please try again.');
@@ -249,7 +251,7 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
@@ -259,65 +261,93 @@ export default function RegisterScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Card / Modal Container matching UI Mockup */}
-          <View style={styles.cardContainer}>
-            {/* Top Row: Close '✕' Button in Red */}
-            <View style={styles.closeRow}>
-              <TouchableOpacity
-                onPress={() => router.back()}
-                style={styles.closeButton}
-                activeOpacity={0.7}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <Ionicons name="close" size={32} color="#FF1744" />
-              </TouchableOpacity>
+          {/* Header Row: Back button + CecureUs Official Logo */}
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.backBtn}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Logo size={42} variant="horizontal" />
+            <View style={{ width: 40 }} />
+          </View>
+
+          {/* Form Card */}
+          <Card style={styles.formCard}>
+            <View style={styles.formHeader}>
+              <Text style={styles.formTitle}>Create Account</Text>
+              <Text style={styles.formSubtitle}>
+                Join CecureUs for confidential mental wellness &amp; compassionate support
+              </Text>
             </View>
 
-            {/* Title */}
-            <Text style={styles.titleText}>Create an account</Text>
-
-            {/* Error / Success Feedback Banners */}
+            {/* Error Banner */}
             {!!error && (
               <View style={styles.errorBanner}>
-                <Ionicons name="alert-circle" size={18} color="#D32F2F" style={{ marginRight: 6 }} />
-                <Text style={styles.errorText}>{error}</Text>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={18}
+                  color={colors.error}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.errorBannerText}>{error}</Text>
               </View>
             )}
 
+            {/* Success Banner */}
             {!!success && (
               <View style={styles.successBanner}>
-                <Ionicons name="checkmark-circle" size={18} color="#2E7D32" style={{ marginRight: 6 }} />
-                <Text style={styles.successText}>{success}</Text>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color={colors.success}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.successBannerText}>{success}</Text>
               </View>
             )}
 
             {/* Field 1: Full Name */}
             <View style={styles.fieldGroup}>
               <Text style={styles.fieldLabel}>Full Name</Text>
-              <TextInput
-                style={styles.singleTextInput}
-                placeholder="Full Name"
-                placeholderTextColor="#94A3B8"
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-              />
+              <View style={styles.inputContainer}>
+                <Ionicons
+                  name="person-outline"
+                  size={20}
+                  color={colors.textMuted}
+                  style={styles.leftIcon}
+                />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. Sainimal G E"
+                  placeholderTextColor={colors.textMuted}
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                />
+              </View>
             </View>
 
-            {/* Field 2: Mobile */}
+            {/* Field 2: Mobile Phone */}
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Mobile</Text>
-              <View style={[styles.inputRowContainer, isMobileVerified && styles.inputRowContainerVerified]}>
-                {/* Left +91 Box */}
-                <View style={styles.countryCodeBox}>
-                  <Text style={styles.countryCodeText}>+91</Text>
+              <Text style={styles.fieldLabel}>Mobile Phone</Text>
+              <View
+                style={[
+                  styles.inputContainer,
+                  isMobileVerified && styles.inputContainerVerified,
+                ]}
+              >
+                {/* +91 Country Code Badge */}
+                <View style={styles.countryBadge}>
+                  <Text style={styles.countryBadgeText}>+91</Text>
                 </View>
 
-                {/* Mobile Text Input */}
                 <TextInput
-                  style={styles.flexTextInput}
-                  placeholder="Mobile Number"
-                  placeholderTextColor="#94A3B8"
+                  style={styles.textInput}
+                  placeholder="e.g. 9840893911"
+                  placeholderTextColor={colors.textMuted}
                   value={mobile}
                   onChangeText={(val) => {
                     if (!isMobileVerified) {
@@ -330,25 +360,31 @@ export default function RegisterScreen() {
                   editable={!isMobileVerified}
                 />
 
-                {/* Right Action: "Verified ✓" Badge or "Get OTP" Button */}
+                {/* Right Action: Verified Badge or Get OTP Button */}
                 {isMobileVerified ? (
                   <View style={styles.verifiedBadge}>
-                    <Text style={styles.verifiedBadgeText}>Verified ✓</Text>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#059669"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
                   </View>
                 ) : (
                   <TouchableOpacity
                     style={[
-                      styles.actionButton,
-                      isMobileOtpSent && mobileTimer > 0 && styles.actionButtonDisabled,
+                      styles.otpActionButton,
+                      isMobileOtpSent && mobileTimer > 0 && styles.otpActionButtonDisabled,
                     ]}
                     onPress={handleGetMobileOtp}
                     disabled={isRequestingMobileOtp || (isMobileOtpSent && mobileTimer > 0)}
                     activeOpacity={0.7}
                   >
                     {isRequestingMobileOtp ? (
-                      <ActivityIndicator size="small" color="#475569" />
+                      <ActivityIndicator size="small" color={colors.primary} />
                     ) : (
-                      <Text style={styles.actionButtonText}>
+                      <Text style={styles.otpActionButtonText}>
                         {isMobileOtpSent ? (mobileTimer > 0 ? `${mobileTimer}s` : 'Resend') : 'Get OTP'}
                       </Text>
                     )}
@@ -357,42 +393,45 @@ export default function RegisterScreen() {
               </View>
             </View>
 
-            {/* Field 2b: Inline Mobile OTP (Opens directly below Mobile when Get OTP is clicked) */}
+            {/* Field 2b: Inline Mobile OTP Box (Appears right below Mobile when Get OTP is clicked) */}
             {isMobileOtpSent && !isMobileVerified && (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.fieldLabel}>Mobile OTP</Text>
-                <View style={styles.inputRowContainer}>
+              <View style={styles.inlineOtpCard}>
+                <View style={styles.inlineOtpHeader}>
+                  <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
+                  <Text style={styles.inlineOtpTitle}>Enter Mobile Verification Code</Text>
+                </View>
+
+                <View style={styles.inlineOtpInputRow}>
                   <TextInput
-                    style={styles.flexTextInputPadded}
+                    style={styles.inlineOtpInput}
                     placeholder="Enter 6-digit OTP"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={colors.textMuted}
                     value={mobileOtp}
                     onChangeText={setMobileOtp}
                     keyboardType="number-pad"
                     maxLength={6}
                   />
                   <TouchableOpacity
-                    style={styles.verifyRedButton}
+                    style={styles.verifyButton}
                     onPress={handleVerifyMobileOtp}
                     disabled={isVerifyingMobileOtp}
                     activeOpacity={0.7}
                   >
                     {isVerifyingMobileOtp ? (
-                      <ActivityIndicator size="small" color="#FF1744" />
+                      <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                      <Text style={styles.verifyRedButtonText}>Verify</Text>
+                      <Text style={styles.verifyButtonText}>Verify</Text>
                     )}
                   </TouchableOpacity>
                 </View>
 
-                {/* Mobile Resend Countdown */}
-                <View style={styles.resendPromptRow}>
+                <View style={styles.resendRow}>
                   <Text style={styles.resendTextMuted}>Didn't receive OTP? </Text>
                   {mobileTimer > 0 ? (
-                    <Text style={styles.resendTextRed}>Resend in {mobileTimer}s</Text>
+                    <Text style={styles.resendTextHighlight}>Resend in {mobileTimer}s</Text>
                   ) : (
                     <TouchableOpacity onPress={handleGetMobileOtp}>
-                      <Text style={styles.resendTextRed}>Resend now</Text>
+                      <Text style={styles.resendTextHighlight}>Resend now</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -401,18 +440,31 @@ export default function RegisterScreen() {
 
             {/* Field 3: Email (Disabled until Mobile is Verified) */}
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Email</Text>
+              <View style={styles.labelRow}>
+                <Text style={styles.fieldLabel}>Email / Gmail Address</Text>
+                {!isMobileVerified && (
+                  <Text style={styles.stepHint}>Verify mobile first</Text>
+                )}
+              </View>
+
               <View
                 style={[
-                  styles.inputRowContainer,
-                  !isMobileVerified && styles.inputRowContainerDisabled,
-                  isEmailVerified && styles.inputRowContainerVerified,
+                  styles.inputContainer,
+                  !isMobileVerified && styles.inputContainerDisabled,
+                  isEmailVerified && styles.inputContainerVerified,
                 ]}
               >
+                <Ionicons
+                  name="mail-outline"
+                  size={20}
+                  color={!isMobileVerified ? colors.textMuted : colors.primary}
+                  style={styles.leftIcon}
+                />
+
                 <TextInput
-                  style={styles.flexTextInputPadded}
-                  placeholder="name@gmail.com"
-                  placeholderTextColor="#94A3B8"
+                  style={styles.textInput}
+                  placeholder="e.g. yourname@gmail.com"
+                  placeholderTextColor={colors.textMuted}
                   value={email}
                   onChangeText={(val) => {
                     if (!isEmailVerified) {
@@ -425,28 +477,35 @@ export default function RegisterScreen() {
                   editable={isMobileVerified && !isEmailVerified}
                 />
 
-                {/* Right Action: "Verified ✓" Badge or "Send OTP" Button */}
+                {/* Right Action: Verified Badge or Send OTP Button */}
                 {isEmailVerified ? (
                   <View style={styles.verifiedBadge}>
-                    <Text style={styles.verifiedBadgeText}>Verified ✓</Text>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#059669"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
                   </View>
                 ) : (
                   <TouchableOpacity
                     style={[
-                      styles.actionButton,
-                      (!isMobileVerified || (isEmailOtpSent && emailTimer > 0)) && styles.actionButtonDisabled,
+                      styles.otpActionButton,
+                      (!isMobileVerified || (isEmailOtpSent && emailTimer > 0)) &&
+                        styles.otpActionButtonDisabled,
                     ]}
                     onPress={handleSendEmailOtp}
                     disabled={!isMobileVerified || isRequestingEmailOtp || (isEmailOtpSent && emailTimer > 0)}
                     activeOpacity={0.7}
                   >
                     {isRequestingEmailOtp ? (
-                      <ActivityIndicator size="small" color="#475569" />
+                      <ActivityIndicator size="small" color={colors.primary} />
                     ) : (
                       <Text
                         style={[
-                          styles.actionButtonText,
-                          !isMobileVerified && styles.actionButtonTextDisabled,
+                          styles.otpActionButtonText,
+                          !isMobileVerified && styles.otpActionButtonTextMuted,
                         ]}
                       >
                         {isEmailOtpSent ? (emailTimer > 0 ? `${emailTimer}s` : 'Resend') : 'Send OTP'}
@@ -457,56 +516,59 @@ export default function RegisterScreen() {
               </View>
             </View>
 
-            {/* Field 4: Inline Email OTP (Opens directly below Email when Send OTP is clicked) */}
+            {/* Field 4: Inline Email OTP Box (Appears right below Email when Send OTP is clicked) */}
             {isEmailOtpSent && !isEmailVerified && (
-              <View style={styles.fieldGroup}>
-                <Text style={styles.fieldLabel}>Email OTP</Text>
-                <View style={styles.inputRowContainer}>
+              <View style={styles.inlineOtpCard}>
+                <View style={styles.inlineOtpHeader}>
+                  <Ionicons name="mail-open" size={18} color={colors.primary} />
+                  <Text style={styles.inlineOtpTitle}>Enter Email Verification Code</Text>
+                </View>
+
+                <View style={styles.inlineOtpInputRow}>
                   <TextInput
-                    style={styles.flexTextInputPadded}
+                    style={styles.inlineOtpInput}
                     placeholder="Enter 6-digit OTP"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor={colors.textMuted}
                     value={emailOtp}
                     onChangeText={setEmailOtp}
                     keyboardType="number-pad"
                     maxLength={6}
                   />
                   <TouchableOpacity
-                    style={styles.verifyRedButton}
+                    style={styles.verifyButton}
                     onPress={handleVerifyEmailOtp}
                     disabled={isVerifyingEmailOtp}
                     activeOpacity={0.7}
                   >
                     {isVerifyingEmailOtp ? (
-                      <ActivityIndicator size="small" color="#FF1744" />
+                      <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                      <Text style={styles.verifyRedButtonText}>Verify</Text>
+                      <Text style={styles.verifyButtonText}>Verify</Text>
                     )}
                   </TouchableOpacity>
                 </View>
 
-                {/* Email Resend Countdown exactly matching screenshot */}
-                <View style={styles.resendPromptRow}>
+                <View style={styles.resendRow}>
                   <Text style={styles.resendTextMuted}>Didn't receive OTP? </Text>
                   {emailTimer > 0 ? (
-                    <Text style={styles.resendTextRed}>Resend in {emailTimer}s</Text>
+                    <Text style={styles.resendTextHighlight}>Resend in {emailTimer}s</Text>
                   ) : (
                     <TouchableOpacity onPress={handleSendEmailOtp}>
-                      <Text style={styles.resendTextRed}>Resend now</Text>
+                      <Text style={styles.resendTextHighlight}>Resend now</Text>
                     </TouchableOpacity>
                   )}
                 </View>
               </View>
             )}
 
-            {/* Terms & Conditions Checkbox Row */}
+            {/* Terms & Conditions Agreement */}
             <View style={styles.termsRow}>
               <TouchableOpacity
                 style={[styles.checkboxBox, agreed && styles.checkboxBoxChecked]}
                 onPress={() => setAgreed(!agreed)}
                 activeOpacity={0.8}
               >
-                {agreed && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
+                {agreed && <Ionicons name="checkmark" size={15} color="#FFFFFF" />}
               </TouchableOpacity>
               <Text style={styles.termsText}>
                 I agree to{' '}
@@ -515,19 +577,19 @@ export default function RegisterScreen() {
                   onPress={() =>
                     Alert.alert(
                       'Terms & Conditions',
-                      'CecureUs provides confidential, encrypted mental wellness and counseling support services.'
+                      'CecureUs delivers confidential, encrypted, and compassionate mental health counseling.'
                     )
                   }
                 >
-                  Terms & Conditions
+                  Terms &amp; Conditions
                 </Text>{' '}
-                &{' '}
+                &amp;{' '}
                 <Text
                   style={styles.termsLink}
                   onPress={() =>
                     Alert.alert(
                       'Privacy Policy',
-                      'Your privacy is our highest priority. All your notes, chats, and therapy sessions remain strictly confidential.'
+                      'Your privacy is guaranteed. Notes and conversations remain strictly confidential.'
                     )
                   }
                 >
@@ -537,35 +599,29 @@ export default function RegisterScreen() {
               </Text>
             </View>
 
-            {/* Primary Signup Button */}
-            <TouchableOpacity
-              style={[
-                styles.signupButton,
-                (!isMobileVerified || !isEmailVerified || !agreed || isSigningUp) &&
-                  styles.signupButtonDisabled,
-              ]}
-              onPress={handleSignup}
+            {/* Brand Primary Action Button */}
+            <Button
+              title="Create Account"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={isSigningUp}
               disabled={!isMobileVerified || !isEmailVerified || !agreed || isSigningUp}
-              activeOpacity={0.85}
-            >
-              {isSigningUp ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.signupButtonText}>Signup</Text>
-              )}
-            </TouchableOpacity>
+              onPress={handleSignup}
+              style={{ marginTop: spacing.sm }}
+            />
 
-            {/* Footer: Already have an account? Login */}
+            {/* Login Footer */}
             <View style={styles.footerRow}>
-              <Text style={styles.footerText}>Already have an account? </Text>
+              <Text style={styles.footerText}>Already have an account?</Text>
               <TouchableOpacity
                 onPress={() => router.push('/(auth)/login')}
                 activeOpacity={0.7}
               >
-                <Text style={styles.footerLoginLink}>Login</Text>
+                <Text style={styles.footerLink}>Login</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </Card>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -575,227 +631,47 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.background,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xxxl,
   },
-  cardContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 4,
-    paddingVertical: 10,
-  },
-  closeRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginBottom: 8,
-  },
-  closeButton: {
-    padding: 4,
-  },
-  titleText: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#000000',
-    letterSpacing: -0.5,
-    marginBottom: 24,
-  },
-  fieldGroup: {
-    marginBottom: 18,
-  },
-  fieldLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 8,
-  },
-  singleTextInput: {
-    height: 52,
-    borderWidth: 1.2,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    fontSize: 16,
-    color: '#000000',
-    backgroundColor: '#FFFFFF',
-  },
-  inputRowContainer: {
-    height: 52,
-    borderWidth: 1.2,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
   },
-  inputRowContainerDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
-  },
-  inputRowContainerVerified: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#CBD5E1',
-  },
-  countryCodeBox: {
-    width: 58,
-    height: '100%',
-    backgroundColor: '#E2E8F0',
-    borderRightWidth: 1,
-    borderRightColor: '#CBD5E1',
+  backBtn: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  countryCodeText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  flexTextInput: {
-    flex: 1,
-    height: '100%',
-    paddingHorizontal: 12,
-    fontSize: 16,
-    color: '#000000',
-  },
-  flexTextInputPadded: {
-    flex: 1,
-    height: '100%',
-    paddingHorizontal: 14,
-    fontSize: 16,
-    color: '#000000',
-  },
-  actionButton: {
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginRight: 10,
+    borderColor: colors.borderLight,
+    ...shadows.sm,
   },
-  actionButtonDisabled: {
-    opacity: 0.5,
+  formCard: {
+    padding: spacing.xl,
+    marginVertical: spacing.xs,
   },
-  actionButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
+  formHeader: {
+    marginBottom: spacing.lg,
   },
-  actionButtonTextDisabled: {
-    color: '#94A3B8',
+  formTitle: {
+    ...typography.h2,
+    color: colors.text,
+    fontSize: 22,
+    marginBottom: 4,
   },
-  verifiedBadge: {
-    backgroundColor: '#E8F8EE',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginRight: 10,
-  },
-  verifiedBadgeText: {
-    color: '#1E8E3E',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  verifyRedButton: {
-    borderWidth: 1.5,
-    borderColor: '#FF1744',
-    borderRadius: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    marginRight: 10,
-    backgroundColor: '#FFFFFF',
-  },
-  verifyRedButtonText: {
-    color: '#FF1744',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  resendPromptRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  resendTextMuted: {
-    fontSize: 13,
-    color: '#475569',
-  },
-  resendTextRed: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FF1744',
-  },
-  termsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 14,
-  },
-  checkboxBox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  checkboxBoxChecked: {
-    backgroundColor: '#FF1744',
-    borderColor: '#FF1744',
-  },
-  termsText: {
-    fontSize: 13.5,
-    color: '#334155',
-    flex: 1,
+  formSubtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
     lineHeight: 18,
-  },
-  termsLink: {
-    color: '#FF1744',
-    fontWeight: '600',
-  },
-  signupButton: {
-    height: 52,
-    backgroundColor: '#FF0000',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    shadowColor: '#FF0000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  signupButtonDisabled: {
-    backgroundColor: '#FFA4B2',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  signupButtonText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  footerRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  footerText: {
-    fontSize: 15,
-    color: '#111827',
-  },
-  footerLoginLink: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FF1744',
   },
   errorBanner: {
     flexDirection: 'row',
@@ -803,30 +679,237 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEE2E2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
-  errorText: {
-    fontSize: 13,
-    color: '#B91C1C',
+  errorBannerText: {
+    ...typography.small,
+    color: colors.error,
     fontWeight: '600',
     flex: 1,
   },
   successBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.primaryBackground,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
+    borderColor: '#CCF0EB',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
-  successText: {
-    fontSize: 13,
-    color: '#15803D',
+  successBannerText: {
+    ...typography.small,
+    color: colors.primaryDark,
     fontWeight: '600',
     flex: 1,
+  },
+  fieldGroup: {
+    marginBottom: spacing.lg,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  fieldLabel: {
+    ...typography.captionBold,
+    color: colors.text,
+    marginBottom: 6,
+  },
+  stepHint: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginBottom: 6,
+    fontStyle: 'italic',
+  },
+  inputContainer: {
+    height: 50,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  inputContainerDisabled: {
+    backgroundColor: colors.surfaceSubtle,
+    borderColor: colors.borderLight,
+    opacity: 0.75,
+  },
+  inputContainerVerified: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  leftIcon: {
+    marginRight: 8,
+  },
+  countryBadge: {
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  countryBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  textInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 15,
+    color: colors.text,
+  },
+  otpActionButton: {
+    backgroundColor: colors.primaryMuted,
+    borderWidth: 1,
+    borderColor: '#CCF0EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+  },
+  otpActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  otpActionButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  otpActionButtonTextMuted: {
+    color: colors.textMuted,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  verifiedBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  inlineOtpCard: {
+    backgroundColor: colors.primaryBackground,
+    borderWidth: 1.5,
+    borderColor: '#CCF0EB',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginTop: -8,
+    marginBottom: spacing.lg,
+  },
+  inlineOtpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 6,
+  },
+  inlineOtpTitle: {
+    ...typography.captionBold,
+    color: colors.primaryDark,
+  },
+  inlineOtpInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inlineOtpInput: {
+    flex: 1,
+    height: 44,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: '#B2EBF2',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    letterSpacing: 2,
+  },
+  verifyButton: {
+    backgroundColor: colors.primary,
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verifyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  resendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  resendTextMuted: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  resendTextHighlight: {
+    ...typography.small,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxBoxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  termsText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flex: 1,
+    lineHeight: 18,
+  },
+  termsLink: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  footerRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.xl,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    gap: 6,
+  },
+  footerText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  footerLink: {
+    ...typography.captionBold,
+    color: colors.primary,
   },
 });
