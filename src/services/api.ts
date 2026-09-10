@@ -12,16 +12,10 @@ import { getAuthToken } from './storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
-const PUBLIC_TUNNEL_URL = 'https://misc-spotlight-yoga-mpegs.trycloudflare.com';
-const LOCAL_LAN_URL = 'http://192.168.1.3:3000';
+const DEFAULT_LAPTOP_LAN_IP = '192.168.1.2';
+const API_PORT = 3000;
 
-function resolveApiBaseUrl(): string {
-  // 1. Explicit environment variable (injected by Expo from .env)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '');
-  }
-
-  // 2. Extract host from Expo Go runtime
+function getExpoHostIp(): string | null {
   const hostUri =
     Constants.expoConfig?.hostUri ||
     (Constants as any).manifest?.debuggerHost ||
@@ -31,16 +25,40 @@ function resolveApiBaseUrl(): string {
   if (hostUri && typeof hostUri === 'string') {
     const clean = hostUri.replace(/^exp:\/\//, '').replace(/^https?:\/\//, '');
     const host = clean.split(':')[0];
-
-    // Only if it's a real numeric IPv4 address (e.g. 192.168.1.3), use port 3000 on LAN
     const isNumericIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
     if (isNumericIpv4 && host !== '127.0.0.1' && host !== 'localhost') {
-      return `http://${host}:3000`;
+      return host;
     }
   }
+  return null;
+}
 
-  // 3. If running via tunnel (exp.direct / ngrok) or fallback, use active HTTPS tunnel
-  return PUBLIC_TUNNEL_URL;
+function resolveApiBaseUrl(): string {
+  const rawEnv = (process.env.EXPO_PUBLIC_API_URL || '').trim();
+  const detectedHost = getExpoHostIp();
+
+  // Web environment: localhost is valid directly in browser
+  if (Platform.OS === 'web') {
+    return rawEnv ? rawEnv.replace(/\/$/, '') : `http://localhost:${API_PORT}`;
+  }
+
+  // Physical phone (Android/iOS): localhost points to phone's loopback, not laptop.
+  // Translate localhost/127.0.0.1 to the laptop's LAN IP.
+  if (rawEnv) {
+    const clean = rawEnv.replace(/\/$/, '');
+    if (clean.includes('localhost') || clean.includes('127.0.0.1')) {
+      const laptopIp = detectedHost || DEFAULT_LAPTOP_LAN_IP;
+      return clean.replace(/localhost|127\.0\.0\.1/, laptopIp);
+    }
+    return clean;
+  }
+
+  // Fallback to detected Expo host or current laptop LAN IP
+  if (detectedHost) {
+    return `http://${detectedHost}:${API_PORT}`;
+  }
+
+  return `http://${DEFAULT_LAPTOP_LAN_IP}:${API_PORT}`;
 }
 
 export const DEFAULT_API_URL = resolveApiBaseUrl();
@@ -66,10 +84,10 @@ interface RequestOptions {
 
 export class ApiError extends Error {
   statusCode: number;
-  code: string;
+  code?: string;
   details?: any;
 
-  constructor(message: string, statusCode: number = 500, code: string = 'UNKNOWN_ERROR', details?: any) {
+  constructor(message: string, statusCode: number, code?: string, details?: any) {
     super(message);
     this.name = 'ApiError';
     this.statusCode = statusCode;
@@ -78,96 +96,118 @@ export class ApiError extends Error {
   }
 }
 
-async function executeFetch(baseUrl: string, endpoint: string, options: RequestOptions = {}): Promise<any> {
-  const url = `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
-  const headers: Record<string, string> = {
+/**
+ * Core HTTP Request Wrapper
+ * Automatically connects to laptop server from phone via resolved LAN IP,
+ * with failover between candidate routes if IP changes.
+ */
+export async function apiRequest<T = any>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const {
+    method = 'GET',
+    body,
+    headers = {},
+    skipAuth = false,
+    timeoutMs = 15000,
+    idempotencyKey,
+  } = options;
+
+  const resolvedHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    ...options.headers,
+    ...headers,
   };
 
-  if (!options.skipAuth) {
+  if (!skipAuth) {
     const token = await getAuthToken();
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      resolvedHeaders['Authorization'] = `Bearer ${token}`;
     }
   }
 
-  if (options.idempotencyKey) {
-    headers['X-Idempotency-Key'] = options.idempotencyKey;
+  if (idempotencyKey) {
+    resolvedHeaders['Idempotency-Key'] = idempotencyKey;
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
-  try {
-    const response = await fetch(url, {
-      method: options.method || 'GET',
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new ApiError(
-        data.error || `Request failed with status ${response.status}`,
-        response.status,
-        data.code || 'API_ERROR',
-        data.details
-      );
-    }
-
-    return data;
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
-}
-
-/**
- * Core HTTP request handler with automatic fallback between HTTPS Tunnel and LAN IP
- */
-export async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  // First attempt on primary currentBaseUrl
-  try {
-    const result = await executeFetch(currentBaseUrl, endpoint, options);
-    return result as T;
-  } catch (error: any) {
-    // If it's a server response error (4xx/5xx from API), don't retry, return real error
-    if (error instanceof ApiError && error.statusCode > 0) {
-      throw error;
-    }
-
-    // Network error / connection aborted: try alternate connection route
-    const alternateUrl = currentBaseUrl.includes('trycloudflare.com')
-      ? LOCAL_LAN_URL
-      : PUBLIC_TUNNEL_URL;
-
+  const fetchWithTimeout = async (baseUrl: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const fallbackResult = await executeFetch(alternateUrl, endpoint, options);
-      // Switch active URL since fallback succeeded
-      currentBaseUrl = alternateUrl;
-      return fallbackResult as T;
-    } catch (fallbackError: any) {
-      if (fallbackError instanceof ApiError && fallbackError.statusCode > 0) {
-        throw fallbackError;
-      }
+      return await fetch(`${baseUrl}${cleanEndpoint}`, {
+        method,
+        headers: resolvedHeaders,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
-      if (error.name === 'AbortError' || fallbackError.name === 'AbortError') {
-        throw new ApiError('Request timed out. Please check your internet connection.', 408, 'TIMEOUT');
-      }
+  let response: Response | null = null;
+  let lastError: any = null;
 
-      throw new ApiError(
-        'Unable to reach CecureUs server. Please verify your internet connection and try again.',
-        0,
-        'NETWORK_ERROR'
-      );
+  // 1. Try currentBaseUrl first
+  try {
+    response = await fetchWithTimeout(currentBaseUrl);
+  } catch (err: any) {
+    lastError = err;
+
+    // 2. Failover candidates
+    const detectedHost = getExpoHostIp();
+    const candidates = [
+      `http://${detectedHost || DEFAULT_LAPTOP_LAN_IP}:${API_PORT}`,
+      `http://192.168.1.2:${API_PORT}`,
+      `http://192.168.1.3:${API_PORT}`,
+      `http://localhost:${API_PORT}`,
+      'https://brunette-future-computers-implies.trycloudflare.com',
+    ].filter((url) => url !== currentBaseUrl);
+
+    for (const altUrl of candidates) {
+      try {
+        response = await fetchWithTimeout(altUrl);
+        if (response) {
+          currentBaseUrl = altUrl; // switch active base URL to the responsive one
+          break;
+        }
+      } catch (altErr: any) {
+        lastError = altErr;
+      }
     }
   }
+
+  if (!response) {
+    throw new ApiError(
+      lastError?.message || 'Network connection failed. Please check your internet or tunnel.',
+      0,
+      'NETWORK_ERROR'
+    );
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = null;
+
+  if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => null);
+  } else {
+    data = await response.text().catch(() => null);
+  }
+
+  if (!response.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      (Array.isArray(data?.details) ? data.details.map((d: any) => d.message).join(', ') : null) ||
+      `Request failed with status ${response.status}`;
+
+    throw new ApiError(message, response.status, data?.code, data?.details);
+  }
+
+  return data as T;
 }
 
 // ─── DOMAIN API WRAPPERS ──────────────────────────────────────────
@@ -179,28 +219,37 @@ export const authApi = {
   requestPhoneOtp: (data: { phone: string }) =>
     apiRequest('/api/auth/request-otp', { method: 'POST', body: { phone: data.phone, purpose: 'registration' }, skipAuth: true }),
 
+  verifyPhoneOtp: (data: { phone: string; code: string }) =>
+    apiRequest('/api/auth/verify-otp', { method: 'POST', body: { phone: data.phone, code: data.code, purpose: 'registration' }, skipAuth: true }),
+
   verifyPhoneStep: (data: { phone: string; code: string; email: string }) =>
     apiRequest('/api/auth/verify-phone-step', { method: 'POST', body: data, skipAuth: true }),
 
   requestEmailOtp: (data: { email: string }) =>
-    apiRequest('/api/auth/request-otp', { method: 'POST', body: { phone: data.email, purpose: 'registration' }, skipAuth: true }),
+    apiRequest('/api/auth/request-otp', { method: 'POST', body: { email: data.email, purpose: 'registration' }, skipAuth: true }),
+
+  verifyEmailOtp: (data: { email: string; code: string }) =>
+    apiRequest('/api/auth/verify-otp', { method: 'POST', body: { email: data.email, code: data.code, purpose: 'registration' }, skipAuth: true }),
 
   registerWithOtp: (data: {
     name: string;
     phone: string;
     email: string;
-    password: string;
-    emailOtp: string;
+    password?: string;
+    emailOtp?: string;
   }) =>
     apiRequest('/api/auth/register-with-otp', { method: 'POST', body: data, skipAuth: true }),
 
-  login: (data: { phone: string; password?: string }) =>
+  login: (data: { phone?: string; identifier?: string; password?: string }) =>
     apiRequest('/api/auth/login', { method: 'POST', body: data, skipAuth: true }),
 
-  requestOtp: (data: { phone: string; purpose: 'registration' | 'login' | 'password_reset' }) =>
+  loginWithOtp: (data: { identifier: string; code: string }) =>
+    apiRequest('/api/auth/login-with-otp', { method: 'POST', body: data, skipAuth: true }),
+
+  requestOtp: (data: { identifier?: string; phone?: string; email?: string; purpose: 'registration' | 'login' | 'password_reset' }) =>
     apiRequest('/api/auth/request-otp', { method: 'POST', body: data, skipAuth: true }),
 
-  verifyOtp: (data: { phone: string; code: string; purpose: 'registration' | 'login' | 'password_reset' }) =>
+  verifyOtp: (data: { identifier?: string; phone?: string; email?: string; code: string; purpose: 'registration' | 'login' | 'password_reset' }) =>
     apiRequest('/api/auth/verify-otp', { method: 'POST', body: data, skipAuth: true }),
 
   logout: () =>

@@ -1,83 +1,252 @@
 /**
  * CECUREUS — Registration Screen
  *
- * Captures user details and initiates dual Phone & Gmail verification:
- * - Full Name
- * - Mobile Phone (+91)
- * - Gmail / Email
- * - Password
- * - "Create Account" -> Requests dual OTP and routes to Verification screen
+ * Fully integrated with the official CecureUs Design System:
+ * - Brand Theme Colors: Primary Teal #00A99D, Mint #E6F7F5, Slate #0F172A
+ * - Official CecureUs Logo & Card elevation
+ * - Progressive Step-by-Step Inline OTP Verification:
+ *   1. User enters Full Name & Mobile (+91)
+ *   2. "Get OTP" button on right opens inline "Mobile OTP" input row below
+ *   3. Verifying phone displays "Verified ✓" green pill and locks the field
+ *   4. Email input unlocks ONLY after phone verification succeeds
+ *   5. "Send OTP" button on right opens inline "Email OTP" row below
+ *   6. Verifying email displays "Verified ✓" badge
+ *   7. Agreement to Terms & Conditions checkbox
+ *   8. Brand Teal "Create Account" button directly routes to authenticated Dashboard
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../../components/ui/Card';
-import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Logo } from '../../components/ui/Logo';
+import { colors, typography, spacing, borderRadius, shadows } from '../../constants/theme';
 import { authApi } from '../../services/api';
-import { colors, typography, spacing, borderRadius } from '../../constants/theme';
+import { useAuth } from '../../context/AuthContext';
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const { registerWithOtp } = useAuth();
 
+  // Form Fields
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [mobile, setMobile] = useState('');
+  const [mobileOtp, setMobileOtp] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [emailOtp, setEmailOtp] = useState('');
+  const [agreed, setAgreed] = useState(true);
 
-  const handleCreateAccount = async () => {
-    if (!name.trim()) {
-      setError('Please enter your full name');
-      return;
+  // Progressive Verification States
+  const [isMobileOtpSent, setIsMobileOtpSent] = useState(false);
+  const [isMobileVerified, setIsMobileVerified] = useState(false);
+  const [isEmailOtpSent, setIsEmailOtpSent] = useState(false);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
+
+  // Loading States
+  const [isRequestingMobileOtp, setIsRequestingMobileOtp] = useState(false);
+  const [isVerifyingMobileOtp, setIsVerifyingMobileOtp] = useState(false);
+  const [isRequestingEmailOtp, setIsRequestingEmailOtp] = useState(false);
+  const [isVerifyingEmailOtp, setIsVerifyingEmailOtp] = useState(false);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+
+  // Timers
+  const [mobileTimer, setMobileTimer] = useState(0);
+  const [emailTimer, setEmailTimer] = useState(0);
+
+  // Error & Status Banners
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Mobile resend timer
+  useEffect(() => {
+    let interval: any = null;
+    if (mobileTimer > 0) {
+      interval = setInterval(() => setMobileTimer((prev) => prev - 1), 1000);
     }
-    if (!phone.trim()) {
-      setError('Please enter your phone number');
-      return;
+    return () => clearInterval(interval);
+  }, [mobileTimer]);
+
+  // Email resend timer
+  useEffect(() => {
+    let interval: any = null;
+    if (emailTimer > 0) {
+      interval = setInterval(() => setEmailTimer((prev) => prev - 1), 1000);
     }
-    if (!email.trim() || !email.includes('@')) {
-      setError('Please enter a valid Gmail / email address');
-      return;
-    }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    return () => clearInterval(interval);
+  }, [emailTimer]);
+
+  // ─── STEP 1: MOBILE OTP REQUEST ─────────────────────────────────
+  const handleGetMobileOtp = async () => {
+    const cleanMobile = mobile.replace(/[^0-9]/g, '').trim();
+    if (!cleanMobile || cleanMobile.length < 10) {
+      setError('Please enter a valid 10-digit mobile number');
       return;
     }
 
     setError('');
-    setIsSubmitting(true);
+    setSuccess('');
+    setIsRequestingMobileOtp(true);
 
     try {
-      await authApi.requestPhoneOtp({ phone: phone.trim() });
+      const formattedPhone = cleanMobile.slice(-10);
+      const response = await authApi.requestPhoneOtp({ phone: formattedPhone });
+      setIsMobileOtpSent(true);
+      setMobileTimer(30);
+      setSuccess('Verification code sent to your mobile number.');
 
-      // Navigate to OTP verification screen
-      router.push({
-        pathname: '/(auth)/otp',
-        params: {
-          name: name.trim(),
-          phone: phone.trim(),
-          email: email.trim().toLowerCase(),
-          password,
-        },
-      });
+      if (response?.devOtpCode) {
+        setMobileOtp(response.devOtpCode);
+      }
     } catch (err: any) {
-      setError(err.message || 'Unable to connect to server. Please check your network.');
+      setError(err.message || 'Failed to send mobile OTP. Please try again.');
     } finally {
-      setIsSubmitting(false);
+      setIsRequestingMobileOtp(false);
+    }
+  };
+
+  // ─── STEP 2: VERIFY MOBILE OTP ──────────────────────────────────
+  const handleVerifyMobileOtp = async () => {
+    const cleanMobile = mobile.replace(/[^0-9]/g, '').slice(-10);
+    const cleanCode = mobileOtp.trim();
+
+    if (!cleanCode || cleanCode.length !== 6) {
+      setError('Please enter the 6-digit OTP code');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsVerifyingMobileOtp(true);
+
+    try {
+      await authApi.verifyPhoneOtp({
+        phone: cleanMobile,
+        code: cleanCode,
+      });
+
+      setIsMobileVerified(true);
+      setIsMobileOtpSent(false);
+      setSuccess('Mobile number verified! You can now verify your email address.');
+    } catch (err: any) {
+      setError(err.message || 'Invalid or expired mobile verification code.');
+    } finally {
+      setIsVerifyingMobileOtp(false);
+    }
+  };
+
+  // ─── STEP 3: EMAIL OTP REQUEST (UNLOCKED ONLY AFTER MOBILE VERIFIED) ───
+  const handleSendEmailOtp = async () => {
+    if (!isMobileVerified) {
+      setError('Please verify your mobile phone first');
+      return;
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsRequestingEmailOtp(true);
+
+    try {
+      const response = await authApi.requestEmailOtp({ email: cleanEmail });
+      setIsEmailOtpSent(true);
+      setEmailTimer(30);
+      setSuccess('Verification code dispatched to your email.');
+
+      if (response?.devOtpCode) {
+        setEmailOtp(response.devOtpCode);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to dispatch email verification code.');
+    } finally {
+      setIsRequestingEmailOtp(false);
+    }
+  };
+
+  // ─── STEP 4: VERIFY EMAIL OTP ───────────────────────────────────
+  const handleVerifyEmailOtp = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = emailOtp.trim();
+
+    if (!cleanCode || cleanCode.length !== 6) {
+      setError('Please enter the 6-digit email OTP code');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsVerifyingEmailOtp(true);
+
+    try {
+      await authApi.verifyEmailOtp({
+        email: cleanEmail,
+        code: cleanCode,
+      });
+
+      setIsEmailVerified(true);
+      setIsEmailOtpSent(false);
+      setSuccess('Email address verified successfully!');
+    } catch (err: any) {
+      setError(err.message || 'Invalid or expired email verification code.');
+    } finally {
+      setIsVerifyingEmailOtp(false);
+    }
+  };
+
+  // ─── STEP 5: FINAL SIGNUP ───────────────────────────────────────
+  const handleSignup = async () => {
+    if (!name.trim()) {
+      setError('Please enter your full name');
+      return;
+    }
+    if (!isMobileVerified) {
+      setError('Please verify your mobile number first');
+      return;
+    }
+    if (!isEmailVerified) {
+      setError('Please verify your email address first');
+      return;
+    }
+    if (!agreed) {
+      setError('Please agree to the Terms & Conditions and Privacy Policy');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsSigningUp(true);
+
+    try {
+      const cleanMobile = mobile.replace(/[^0-9]/g, '').slice(-10);
+      await registerWithOtp({
+        name: name.trim(),
+        phone: cleanMobile,
+        email: email.trim().toLowerCase(),
+      });
+
+      router.replace('/(tabs)');
+    } catch (err: any) {
+      setError(err.message || 'Registration could not be completed. Please try again.');
+    } finally {
+      setIsSigningUp(false);
     }
   };
 
@@ -90,15 +259,16 @@ export default function RegisterScreen() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          {/* Header Bar */}
+          {/* Header Row: Back button + CecureUs Official Logo */}
           <View style={styles.headerRow}>
             <TouchableOpacity
               onPress={() => router.back()}
               style={styles.backBtn}
               activeOpacity={0.7}
             >
-              <Ionicons name="arrow-back" size={24} color={colors.text} />
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
             <Logo size={42} variant="horizontal" />
             <View style={{ width: 40 }} />
@@ -109,10 +279,11 @@ export default function RegisterScreen() {
             <View style={styles.formHeader}>
               <Text style={styles.formTitle}>Create Account</Text>
               <Text style={styles.formSubtitle}>
-                Join CecureUs for confidential mental wellness support
+                Join CecureUs for confidential mental wellness &amp; compassionate support
               </Text>
             </View>
 
+            {/* Error Banner */}
             {!!error && (
               <View style={styles.errorBanner}>
                 <Ionicons
@@ -125,50 +296,318 @@ export default function RegisterScreen() {
               </View>
             )}
 
-            <Input
-              label="Full Name"
-              placeholder="e.g. Harsha Verma"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-              leftIcon={<Ionicons name="person-outline" size={20} color={colors.textMuted} />}
-            />
+            {/* Success Banner */}
+            {!!success && (
+              <View style={styles.successBanner}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color={colors.success}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.successBannerText}>{success}</Text>
+              </View>
+            )}
 
-            <Input
-              label="Phone Number"
-              placeholder="+91 98765 43210"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              leftIcon={<Ionicons name="call-outline" size={20} color={colors.textMuted} />}
-            />
+            {/* Field 1: Full Name */}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Full Name</Text>
+              <View style={styles.inputContainer}>
+                <Ionicons
+                  name="person-outline"
+                  size={20}
+                  color={colors.textMuted}
+                  style={styles.leftIcon}
+                />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. Sainimal G E"
+                  placeholderTextColor={colors.textMuted}
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                />
+              </View>
+            </View>
 
-            <Input
-              label="Gmail / Email Address"
-              placeholder="name@gmail.com"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              leftIcon={<Ionicons name="mail-outline" size={20} color={colors.textMuted} />}
-            />
+            {/* Field 2: Mobile Phone */}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>Mobile Phone</Text>
+              <View
+                style={[
+                  styles.inputContainer,
+                  isMobileVerified && styles.inputContainerVerified,
+                ]}
+              >
+                {/* +91 Country Code Badge */}
+                <View style={styles.countryBadge}>
+                  <Text style={styles.countryBadgeText}>+91</Text>
+                </View>
 
-            <Input
-              label="Create Password"
-              placeholder="At least 8 characters"
-              value={password}
-              onChangeText={setPassword}
-              isPassword={true}
-              leftIcon={<Ionicons name="lock-closed-outline" size={20} color={colors.textMuted} />}
-            />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. 9840893911"
+                  placeholderTextColor={colors.textMuted}
+                  value={mobile}
+                  onChangeText={(val) => {
+                    if (!isMobileVerified) {
+                      setMobile(val);
+                      setError('');
+                    }
+                  }}
+                  keyboardType="phone-pad"
+                  maxLength={13}
+                  editable={!isMobileVerified}
+                />
 
+                {/* Right Action: Verified Badge or Get OTP Button */}
+                {isMobileVerified ? (
+                  <View style={styles.verifiedBadge}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#059669"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.otpActionButton,
+                      isMobileOtpSent && mobileTimer > 0 && styles.otpActionButtonDisabled,
+                    ]}
+                    onPress={handleGetMobileOtp}
+                    disabled={isRequestingMobileOtp || (isMobileOtpSent && mobileTimer > 0)}
+                    activeOpacity={0.7}
+                  >
+                    {isRequestingMobileOtp ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Text style={styles.otpActionButtonText}>
+                        {isMobileOtpSent ? (mobileTimer > 0 ? `${mobileTimer}s` : 'Resend') : 'Get OTP'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Field 2b: Inline Mobile OTP Box (Appears right below Mobile when Get OTP is clicked) */}
+            {isMobileOtpSent && !isMobileVerified && (
+              <View style={styles.inlineOtpCard}>
+                <View style={styles.inlineOtpHeader}>
+                  <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
+                  <Text style={styles.inlineOtpTitle}>Enter Mobile Verification Code</Text>
+                </View>
+
+                <View style={styles.inlineOtpInputRow}>
+                  <TextInput
+                    style={styles.inlineOtpInput}
+                    placeholder="Enter 6-digit OTP"
+                    placeholderTextColor={colors.textMuted}
+                    value={mobileOtp}
+                    onChangeText={setMobileOtp}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+                  <TouchableOpacity
+                    style={styles.verifyButton}
+                    onPress={handleVerifyMobileOtp}
+                    disabled={isVerifyingMobileOtp}
+                    activeOpacity={0.7}
+                  >
+                    {isVerifyingMobileOtp ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.verifyButtonText}>Verify</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.resendRow}>
+                  <Text style={styles.resendTextMuted}>Didn't receive OTP? </Text>
+                  {mobileTimer > 0 ? (
+                    <Text style={styles.resendTextHighlight}>Resend in {mobileTimer}s</Text>
+                  ) : (
+                    <TouchableOpacity onPress={handleGetMobileOtp}>
+                      <Text style={styles.resendTextHighlight}>Resend now</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Field 3: Email (Disabled until Mobile is Verified) */}
+            <View style={styles.fieldGroup}>
+              <View style={styles.labelRow}>
+                <Text style={styles.fieldLabel}>Email / Gmail Address</Text>
+                {!isMobileVerified && (
+                  <Text style={styles.stepHint}>Verify mobile first</Text>
+                )}
+              </View>
+
+              <View
+                style={[
+                  styles.inputContainer,
+                  !isMobileVerified && styles.inputContainerDisabled,
+                  isEmailVerified && styles.inputContainerVerified,
+                ]}
+              >
+                <Ionicons
+                  name="mail-outline"
+                  size={20}
+                  color={!isMobileVerified ? colors.textMuted : colors.primary}
+                  style={styles.leftIcon}
+                />
+
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="e.g. yourname@gmail.com"
+                  placeholderTextColor={colors.textMuted}
+                  value={email}
+                  onChangeText={(val) => {
+                    if (!isEmailVerified) {
+                      setEmail(val);
+                      setError('');
+                    }
+                  }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  editable={isMobileVerified && !isEmailVerified}
+                />
+
+                {/* Right Action: Verified Badge or Send OTP Button */}
+                {isEmailVerified ? (
+                  <View style={styles.verifiedBadge}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color="#059669"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.verifiedBadgeText}>Verified</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.otpActionButton,
+                      (!isMobileVerified || (isEmailOtpSent && emailTimer > 0)) &&
+                        styles.otpActionButtonDisabled,
+                    ]}
+                    onPress={handleSendEmailOtp}
+                    disabled={!isMobileVerified || isRequestingEmailOtp || (isEmailOtpSent && emailTimer > 0)}
+                    activeOpacity={0.7}
+                  >
+                    {isRequestingEmailOtp ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Text
+                        style={[
+                          styles.otpActionButtonText,
+                          !isMobileVerified && styles.otpActionButtonTextMuted,
+                        ]}
+                      >
+                        {isEmailOtpSent ? (emailTimer > 0 ? `${emailTimer}s` : 'Resend') : 'Send OTP'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Field 4: Inline Email OTP Box (Appears right below Email when Send OTP is clicked) */}
+            {isEmailOtpSent && !isEmailVerified && (
+              <View style={styles.inlineOtpCard}>
+                <View style={styles.inlineOtpHeader}>
+                  <Ionicons name="mail-open" size={18} color={colors.primary} />
+                  <Text style={styles.inlineOtpTitle}>Enter Email Verification Code</Text>
+                </View>
+
+                <View style={styles.inlineOtpInputRow}>
+                  <TextInput
+                    style={styles.inlineOtpInput}
+                    placeholder="Enter 6-digit OTP"
+                    placeholderTextColor={colors.textMuted}
+                    value={emailOtp}
+                    onChangeText={setEmailOtp}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                  />
+                  <TouchableOpacity
+                    style={styles.verifyButton}
+                    onPress={handleVerifyEmailOtp}
+                    disabled={isVerifyingEmailOtp}
+                    activeOpacity={0.7}
+                  >
+                    {isVerifyingEmailOtp ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.verifyButtonText}>Verify</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.resendRow}>
+                  <Text style={styles.resendTextMuted}>Didn't receive OTP? </Text>
+                  {emailTimer > 0 ? (
+                    <Text style={styles.resendTextHighlight}>Resend in {emailTimer}s</Text>
+                  ) : (
+                    <TouchableOpacity onPress={handleSendEmailOtp}>
+                      <Text style={styles.resendTextHighlight}>Resend now</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Terms & Conditions Agreement */}
+            <View style={styles.termsRow}>
+              <TouchableOpacity
+                style={[styles.checkboxBox, agreed && styles.checkboxBoxChecked]}
+                onPress={() => setAgreed(!agreed)}
+                activeOpacity={0.8}
+              >
+                {agreed && <Ionicons name="checkmark" size={15} color="#FFFFFF" />}
+              </TouchableOpacity>
+              <Text style={styles.termsText}>
+                I agree to{' '}
+                <Text
+                  style={styles.termsLink}
+                  onPress={() =>
+                    Alert.alert(
+                      'Terms & Conditions',
+                      'CecureUs delivers confidential, encrypted, and compassionate mental health counseling.'
+                    )
+                  }
+                >
+                  Terms &amp; Conditions
+                </Text>{' '}
+                &amp;{' '}
+                <Text
+                  style={styles.termsLink}
+                  onPress={() =>
+                    Alert.alert(
+                      'Privacy Policy',
+                      'Your privacy is guaranteed. Notes and conversations remain strictly confidential.'
+                    )
+                  }
+                >
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
+            </View>
+
+            {/* Brand Primary Action Button */}
             <Button
               title="Create Account"
               variant="primary"
               size="lg"
               fullWidth
-              loading={isSubmitting}
-              onPress={handleCreateAccount}
+              loading={isSigningUp}
+              disabled={!isMobileVerified || !isEmailVerified || !agreed || isSigningUp}
+              onPress={handleSignup}
               style={{ marginTop: spacing.sm }}
             />
 
@@ -192,7 +631,7 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.background,
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
@@ -211,9 +650,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: borderRadius.md,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderLight,
+    ...shadows.sm,
   },
   formCard: {
     padding: spacing.xl,
@@ -237,8 +677,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FEE2E2',
-    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: '#FECACA',
     borderRadius: borderRadius.md,
+    padding: spacing.md,
     marginBottom: spacing.md,
   },
   errorBannerText: {
@@ -246,6 +688,211 @@ const styles = StyleSheet.create({
     color: colors.error,
     fontWeight: '600',
     flex: 1,
+  },
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryBackground,
+    borderWidth: 1,
+    borderColor: '#CCF0EB',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  successBannerText: {
+    ...typography.small,
+    color: colors.primaryDark,
+    fontWeight: '600',
+    flex: 1,
+  },
+  fieldGroup: {
+    marginBottom: spacing.lg,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  fieldLabel: {
+    ...typography.captionBold,
+    color: colors.text,
+    marginBottom: 6,
+  },
+  stepHint: {
+    ...typography.small,
+    color: colors.textMuted,
+    marginBottom: 6,
+    fontStyle: 'italic',
+  },
+  inputContainer: {
+    height: 50,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  inputContainerDisabled: {
+    backgroundColor: colors.surfaceSubtle,
+    borderColor: colors.borderLight,
+    opacity: 0.75,
+  },
+  inputContainerVerified: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  leftIcon: {
+    marginRight: 8,
+  },
+  countryBadge: {
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  countryBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  textInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 15,
+    color: colors.text,
+  },
+  otpActionButton: {
+    backgroundColor: colors.primaryMuted,
+    borderWidth: 1,
+    borderColor: '#CCF0EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+  },
+  otpActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  otpActionButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  otpActionButtonTextMuted: {
+    color: colors.textMuted,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  verifiedBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  inlineOtpCard: {
+    backgroundColor: colors.primaryBackground,
+    borderWidth: 1.5,
+    borderColor: '#CCF0EB',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginTop: -8,
+    marginBottom: spacing.lg,
+  },
+  inlineOtpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 6,
+  },
+  inlineOtpTitle: {
+    ...typography.captionBold,
+    color: colors.primaryDark,
+  },
+  inlineOtpInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inlineOtpInput: {
+    flex: 1,
+    height: 44,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: '#B2EBF2',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    letterSpacing: 2,
+  },
+  verifyButton: {
+    backgroundColor: colors.primary,
+    height: 44,
+    paddingHorizontal: 18,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verifyButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  resendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  resendTextMuted: {
+    ...typography.small,
+    color: colors.textMuted,
+  },
+  resendTextHighlight: {
+    ...typography.small,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  checkboxBoxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  termsText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flex: 1,
+    lineHeight: 18,
+  },
+  termsLink: {
+    color: colors.primary,
+    fontWeight: '600',
   },
   footerRow: {
     flexDirection: 'row',
