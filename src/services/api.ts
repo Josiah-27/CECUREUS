@@ -12,16 +12,10 @@ import { getAuthToken } from './storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
-const PUBLIC_TUNNEL_URL = 'https://brunette-future-computers-implies.trycloudflare.com';
-const LOCAL_LAN_URL = 'http://192.168.1.3:3000';
+const DEFAULT_LAPTOP_LAN_IP = '192.168.1.2';
+const API_PORT = 3000;
 
-function resolveApiBaseUrl(): string {
-  // 1. Explicit environment variable (injected by Expo from .env)
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '');
-  }
-
-  // 2. Extract host from Expo Go runtime
+function getExpoHostIp(): string | null {
   const hostUri =
     Constants.expoConfig?.hostUri ||
     (Constants as any).manifest?.debuggerHost ||
@@ -31,16 +25,40 @@ function resolveApiBaseUrl(): string {
   if (hostUri && typeof hostUri === 'string') {
     const clean = hostUri.replace(/^exp:\/\//, '').replace(/^https?:\/\//, '');
     const host = clean.split(':')[0];
-
-    // Only if it's a real numeric IPv4 address (e.g. 192.168.1.3), use port 3000 on LAN
     const isNumericIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
     if (isNumericIpv4 && host !== '127.0.0.1' && host !== 'localhost') {
-      return `http://${host}:3000`;
+      return host;
     }
   }
+  return null;
+}
 
-  // 3. If running via tunnel (exp.direct / ngrok) or fallback, use active HTTPS tunnel
-  return PUBLIC_TUNNEL_URL;
+function resolveApiBaseUrl(): string {
+  const rawEnv = (process.env.EXPO_PUBLIC_API_URL || '').trim();
+  const detectedHost = getExpoHostIp();
+
+  // Web environment: localhost is valid directly in browser
+  if (Platform.OS === 'web') {
+    return rawEnv ? rawEnv.replace(/\/$/, '') : `http://localhost:${API_PORT}`;
+  }
+
+  // Physical phone (Android/iOS): localhost points to phone's loopback, not laptop.
+  // Translate localhost/127.0.0.1 to the laptop's LAN IP.
+  if (rawEnv) {
+    const clean = rawEnv.replace(/\/$/, '');
+    if (clean.includes('localhost') || clean.includes('127.0.0.1')) {
+      const laptopIp = detectedHost || DEFAULT_LAPTOP_LAN_IP;
+      return clean.replace(/localhost|127\.0\.0\.1/, laptopIp);
+    }
+    return clean;
+  }
+
+  // Fallback to detected Expo host or current laptop LAN IP
+  if (detectedHost) {
+    return `http://${detectedHost}:${API_PORT}`;
+  }
+
+  return `http://${DEFAULT_LAPTOP_LAN_IP}:${API_PORT}`;
 }
 
 export const DEFAULT_API_URL = resolveApiBaseUrl();
@@ -80,8 +98,8 @@ export class ApiError extends Error {
 
 /**
  * Core HTTP Request Wrapper
- * Always attempts the primary baseUrl first (public tunnel).
- * If network fails, automatically attempts fallback to LAN URL.
+ * Automatically connects to laptop server from phone via resolved LAN IP,
+ * with failover between candidate routes if IP changes.
  */
 export async function apiRequest<T = any>(
   endpoint: string,
@@ -115,7 +133,6 @@ export async function apiRequest<T = any>(
 
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
-  // Helper for single fetch with timeout
   const fetchWithTimeout = async (baseUrl: string) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -134,20 +151,31 @@ export async function apiRequest<T = any>(
   let response: Response | null = null;
   let lastError: any = null;
 
-  // Try currentBaseUrl (Primary Cloudflare Tunnel)
+  // 1. Try currentBaseUrl first
   try {
     response = await fetchWithTimeout(currentBaseUrl);
   } catch (err: any) {
     lastError = err;
-    // Attempt local LAN fallback if primary tunnel had a connection failure
-    if (currentBaseUrl !== LOCAL_LAN_URL) {
+
+    // 2. Failover candidates
+    const detectedHost = getExpoHostIp();
+    const candidates = [
+      `http://${detectedHost || DEFAULT_LAPTOP_LAN_IP}:${API_PORT}`,
+      `http://192.168.1.2:${API_PORT}`,
+      `http://192.168.1.3:${API_PORT}`,
+      `http://localhost:${API_PORT}`,
+      'https://brunette-future-computers-implies.trycloudflare.com',
+    ].filter((url) => url !== currentBaseUrl);
+
+    for (const altUrl of candidates) {
       try {
-        response = await fetchWithTimeout(LOCAL_LAN_URL);
+        response = await fetchWithTimeout(altUrl);
         if (response) {
-          currentBaseUrl = LOCAL_LAN_URL; // lock to working LAN route
+          currentBaseUrl = altUrl; // switch active base URL to the responsive one
+          break;
         }
-      } catch (fallbackErr: any) {
-        lastError = fallbackErr;
+      } catch (altErr: any) {
+        lastError = altErr;
       }
     }
   }
